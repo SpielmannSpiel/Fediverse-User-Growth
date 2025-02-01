@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+from datetime import datetime
 
 
 class DataDownloader:
@@ -11,13 +12,15 @@ class DataDownloader:
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
 
     def get_monthly_stats(self, force_download=False):
-        # Check if cached data exists and force_download is not requested.
+        """
+        Fetch monthly stats from the API. If force_download is False and the cache file exists,
+        the cached data is used.
+        """
         if not force_download and os.path.exists(self.cache_file):
             print(f"Using cached data from {self.cache_file}")
             with open(self.cache_file, 'r') as f:
                 cached_data = json.load(f)
             try:
-                # Extract and return the relevant data
                 return cached_data['data']['monthlystats']
             except KeyError:
                 raise Exception("Cached data does not have the expected structure.")
@@ -46,12 +49,30 @@ class DataDownloader:
         else:
             raise Exception(f"Query failed with status code {response.status_code}: {response.text}")
 
-# Example usage:
-if __name__ == "__main__":
-    downloader = DataDownloader()
-    try:
-        # Set force_download to True to bypass the cache, or False to use cached data when available.
-        monthly_stats = downloader.get_monthly_stats(force_download=False)
-        print("Monthly Stats:", monthly_stats)
-    except Exception as e:
-        print("Error:", e)
+    def get_monthly_stats_cached(self):
+        """
+        Return the monthly stats data, using the cached version if it was updated in the current month.
+        If the cache is from a previous month, update it automatically.
+        """
+        need_update = True
+        if os.path.exists(self.cache_file):
+            mod_timestamp = os.path.getmtime(self.cache_file)
+            mod_date = datetime.fromtimestamp(mod_timestamp)
+            now = datetime.now()
+
+            # Check if the cache file was modified in the same year and month as now.
+            if mod_date.year == now.year and mod_date.month == now.month:
+                need_update = False
+
+        if need_update:
+            print("Cache is outdated. Updating data...")
+            return self.get_monthly_stats(force_download=True)
+        else:
+            print(f"Using up-to-date cached data from {self.cache_file}")
+            with open(self.cache_file, 'r') as f:
+                cached_data = json.load(f)
+            try:
+                return cached_data['data']['monthlystats']
+            except KeyError:
+                raise Exception("Cached data does not have the expected structure.")
+
