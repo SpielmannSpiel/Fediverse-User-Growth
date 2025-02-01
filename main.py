@@ -9,4 +9,4 @@ print("Datapoints:", len(monthly_stats))
 #print(monthly_stats)
 
 render = RenderPlot(monthly_stats)
-render.render()
+render.render(RenderPlot.GROUP_MONTH)
