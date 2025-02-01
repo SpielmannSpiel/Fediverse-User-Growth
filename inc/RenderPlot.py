@@ -2,6 +2,25 @@ import os
 import json
 from datetime import datetime
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+from PIL.ImageChops import offset
+
+
+def human_format(num):
+    """
+    Convert a number to human readable format (e.g. 1500 -> 1.5k).
+    """
+    magnitude = 0
+    while abs(num) >= 1000 and magnitude < 4:
+        magnitude += 1
+        num /= 1000.0
+    suffixes = ['', 'k', 'm', 'b', 't']
+    # Show one decimal point if necessary, or no decimals if exact.
+    if num % 1 == 0:
+        return f'{int(num)}{suffixes[magnitude]}'
+    else:
+        return f'{num:.1f}{suffixes[magnitude]}'
+
 
 class RenderPlot:
     # Class constants for grouping options
@@ -43,7 +62,7 @@ class RenderPlot:
         if group_by not in valid_options:
             raise ValueError(f"Invalid group_by option '{group_by}'. Choose from {valid_options}.")
 
-        # Convert filter parameters to datetime objects if they are provided as strings.
+        # Convert filter parameters to datetime objects if provided as strings.
         if date_from is not None and isinstance(date_from, str):
             date_from = datetime.strptime(date_from, '%Y-%m-%d %H:%M:%S')
         if date_to is not None and isinstance(date_to, str):
@@ -83,7 +102,8 @@ class RenderPlot:
         """
         Group the data by the specified interval, apply optional date filtering,
         and render a chart using Matplotlib with XKCD style.
-        Also reads known events from data/known_events.json and annotates them on the plot.
+        Also reads known events from data/known_events.json and annotates them on the plot
+        with arrow pointers that indicate the corresponding datapoint.
 
         Parameters:
             group_by (str): The interval to group by. Options are GROUP_DAY, GROUP_WEEK, or GROUP_MONTH.
@@ -112,15 +132,24 @@ class RenderPlot:
             fig, ax = plt.subplots(figsize=(10, 6))
 
             if chart_type == self.CHART_BAR:
-                ax.bar(positions, y_values, color='skyblue')
+                bars = ax.bar(positions, y_values, color='skyblue')
             elif chart_type == self.CHART_LINE:
-                ax.plot(positions, y_values, marker='o', linestyle='-', color='skyblue')
+                line = ax.plot(positions, y_values, marker='o', linestyle='-', color='skyblue')[0]
 
             ax.set_title(f'Registrations per {group_by.capitalize()} ({chart_type.capitalize()} Chart)')
             ax.set_xlabel(group_by.capitalize())
-            ax.set_ylabel('new Registrations')
+            ax.set_ylabel('New Registrations')
             ax.set_xticks(positions)
             ax.set_xticklabels(x_values, rotation=45)
+
+            # Set y-axis tick labels to human readable format.
+            ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: human_format(x)))
+
+            # For bar charts, annotate each bar with the human-readable value.
+            if chart_type == self.CHART_BAR:
+                for i, y in enumerate(y_values):
+                    ax.text(positions[i], y, human_format(y),
+                            ha='center', va='bottom', fontsize=8, color='black')
 
             # Load known events from file and annotate them on the plot.
             known_events = []
@@ -131,18 +160,24 @@ class RenderPlot:
             except Exception as e:
                 print(f"Could not load known events from {known_events_path}: {e}")
 
-            # Determine a y-position for annotations (use 95% of the current y-axis limit)
+            # Determine a baseline for annotation offsets.
             ymax = max(y_values) if y_values else 0
-            annotation_y = ymax * 0.95
+            base_offset = ymax * 0.05 if ymax > 0 else 1
+            annotations_offset = {}
 
             for event in known_events:
                 event_label = event.get('label', '')
                 event_date_str = event.get('date', '')
+
+                # Attempt to parse the event date using two possible formats.
+                event_dt = None
+
                 try:
                     event_dt = datetime.strptime(event_date_str, '%Y-%m-%d %H:%M:%S')
-                except ValueError as ve:
-                    print(f"Error parsing event date '{event_date_str}': {ve}")
+                except ValueError:
+                    print(f"Error parsing event date '{event_date_str}': does not match expected formats.")
                     continue
+
 
                 # Filter known events as well.
                 if date_from is not None and event_dt < date_from:
@@ -159,11 +194,26 @@ class RenderPlot:
 
                 if event_key in key_to_index:
                     x_pos = key_to_index[event_key]
-                    # Draw a vertical dashed red line at the event's x position
-                    ax.axvline(x=x_pos, color='red', linestyle='--', alpha=0.7)
-                    # Place the event label above the bar/point; text is horizontal (rotation=0)
-                    ax.text(x_pos, annotation_y, event_label, rotation=0,
-                            color='red', fontsize=8, verticalalignment='top', horizontalalignment='center')
+                    y_point = y_values[x_pos]
+
+                    # Get current offset for this x position to avoid overlapping annotations.
+                    offset = annotations_offset.get(x_pos, base_offset)
+                    text_y = y_point + offset
+
+                    # Annotate using an arrow pointing from the text to the data point.
+                    ax.annotate(
+                        event_label,
+                        xy=(x_pos, y_point),
+                        xytext=(x_pos, text_y),
+                        arrowprops=dict(facecolor='red', arrowstyle='->', shrinkA=0, shrinkB=0),
+                        horizontalalignment='center',
+                        verticalalignment='bottom',
+                        fontsize=8,
+                        color='red'
+                    )
+
+                    # Increase the offset for this x position for future annotations.
+                    annotations_offset[x_pos] = offset + base_offset
 
             plt.tight_layout()
             plt.show()
@@ -212,7 +262,6 @@ if __name__ == "__main__":
     # Test 1: Render using the real sample data, grouped by day as a bar chart.
     print("Rendering real sample data grouped by day (Bar Chart):")
     renderer_real = RenderPlot(sample_data)
-    # For example, filter for dates from 2025-02-01 onward.
     renderer_real.render(group_by=RenderPlot.GROUP_DAY,
                          chart_type=RenderPlot.CHART_BAR,
                          date_from='2025-02-01 00:00:00')
