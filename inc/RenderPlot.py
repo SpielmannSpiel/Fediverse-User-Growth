@@ -128,6 +128,7 @@ class RenderPlot:
         # Mapping of group key to its numeric x position (for event annotation)
         key_to_index = {key: i for i, key in enumerate(x_values)}
 
+        plt.tight_layout()
         with plt.xkcd():
             fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -136,11 +137,11 @@ class RenderPlot:
             elif chart_type == self.CHART_LINE:
                 line = ax.plot(positions, y_values, marker='o', linestyle='-', color='skyblue')[0]
 
-            ax.set_title(f'Registrations per {group_by.capitalize()} ({chart_type.capitalize()} Chart)')
+            ax.set_title(f'Fediverse Registrations per {group_by.capitalize()} ({chart_type.capitalize()} Chart)')
             ax.set_xlabel(group_by.capitalize())
             ax.set_ylabel('New Registrations')
             ax.set_xticks(positions)
-            ax.set_xticklabels(x_values, rotation=45)
+            ax.set_xticklabels(x_values, rotation=45, ha='right', rotation_mode='anchor')
 
             # Set y-axis tick labels to human readable format.
             ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: human_format(x)))
