@@ -1,6 +1,5 @@
 import os
 import json
-import requests
 from datetime import datetime
 import matplotlib.pyplot as plt
 
@@ -23,13 +22,18 @@ class RenderPlot:
         """
         self.data = data
 
-    def group_data(self, group_by=GROUP_DAY):
+    def group_data(self, group_by=GROUP_DAY, date_from=None, date_to=None):
         """
         Group data by the specified time interval and summarize total_users.
+        Applies optional date filtering.
 
         Parameters:
             group_by (str): The interval to group by. Options are GROUP_DAY,
                             GROUP_WEEK, or GROUP_MONTH.
+            date_from (str or datetime, optional): Lower bound for filtering (inclusive).
+                Expected format: 'YYYY-MM-DD HH:MM:SS' if string.
+            date_to (str or datetime, optional): Upper bound for filtering (inclusive).
+                Expected format: 'YYYY-MM-DD HH:MM:SS' if string.
 
         Returns:
             tuple: Two lists - (x_values, y_values) where x_values are the group labels
@@ -39,12 +43,24 @@ class RenderPlot:
         if group_by not in valid_options:
             raise ValueError(f"Invalid group_by option '{group_by}'. Choose from {valid_options}.")
 
+        # Convert filter parameters to datetime objects if they are provided as strings.
+        if date_from is not None and isinstance(date_from, str):
+            date_from = datetime.strptime(date_from, '%Y-%m-%d %H:%M:%S')
+        if date_to is not None and isinstance(date_to, str):
+            date_to = datetime.strptime(date_to, '%Y-%m-%d %H:%M:%S')
+
         groups = {}
         for record in self.data:
             try:
                 dt = datetime.strptime(record['date_checked'], '%Y-%m-%d %H:%M:%S')
             except ValueError as ve:
                 raise ValueError(f"Error parsing date '{record['date_checked']}': {ve}")
+
+            # Apply filtering if necessary.
+            if date_from is not None and dt < date_from:
+                continue
+            if date_to is not None and dt > date_to:
+                continue
 
             if group_by == self.GROUP_DAY:
                 key = dt.strftime('%Y-%m-%d')
@@ -63,42 +79,50 @@ class RenderPlot:
             x_values, y_values = [], []
         return list(x_values), list(y_values)
 
-    def render(self, group_by=GROUP_DAY, chart_type=CHART_BAR):
+    def render(self, group_by=GROUP_DAY, chart_type=CHART_BAR, date_from=None, date_to=None):
         """
-        Group the data by the specified interval, then render a chart using Matplotlib with XKCD style.
+        Group the data by the specified interval, apply optional date filtering,
+        and render a chart using Matplotlib with XKCD style.
         Also reads known events from data/known_events.json and annotates them on the plot.
 
         Parameters:
             group_by (str): The interval to group by. Options are GROUP_DAY, GROUP_WEEK, or GROUP_MONTH.
             chart_type (str): The type of chart to render. Options are CHART_BAR or CHART_LINE.
+            date_from (str or datetime, optional): Lower bound for filtering the data.
+            date_to (str or datetime, optional): Upper bound for filtering the data.
         """
         valid_chart_types = {self.CHART_BAR, self.CHART_LINE}
         if chart_type not in valid_chart_types:
             raise ValueError(f"Invalid chart_type '{chart_type}'. Choose from {valid_chart_types}.")
 
-        # Get grouped data as x labels and corresponding sums
-        x_values, y_values = self.group_data(group_by)
+        # Convert date_from and date_to to datetime objects if provided as strings.
+        if date_from is not None and isinstance(date_from, str):
+            date_from = datetime.strptime(date_from, '%Y-%m-%d %H:%M:%S')
+        if date_to is not None and isinstance(date_to, str):
+            date_to = datetime.strptime(date_to, '%Y-%m-%d %H:%M:%S')
+
+        # Get grouped data (applying date filtering if provided)
+        x_values, y_values = self.group_data(group_by, date_from, date_to)
         # Use numeric positions for plotting
         positions = list(range(len(x_values)))
-        # Create a mapping of group key to x position for annotation
+        # Mapping of group key to its numeric x position (for event annotation)
         key_to_index = {key: i for i, key in enumerate(x_values)}
 
         with plt.xkcd():
             fig, ax = plt.subplots(figsize=(10, 6))
 
-            # Plot based on the selected chart type
             if chart_type == self.CHART_BAR:
                 ax.bar(positions, y_values, color='skyblue')
             elif chart_type == self.CHART_LINE:
                 ax.plot(positions, y_values, marker='o', linestyle='-', color='skyblue')
 
-            ax.set_title(f'Total Users Grouped by {group_by.capitalize()} ({chart_type.capitalize()} Chart)')
+            ax.set_title(f'Registrations per {group_by.capitalize()} ({chart_type.capitalize()} Chart)')
             ax.set_xlabel(group_by.capitalize())
-            ax.set_ylabel('Total Users')
+            ax.set_ylabel('new Registrations')
             ax.set_xticks(positions)
             ax.set_xticklabels(x_values, rotation=45)
 
-            # Load known events from file and annotate them on the plot
+            # Load known events from file and annotate them on the plot.
             known_events = []
             known_events_path = os.path.join('data', 'known_events.json')
             try:
@@ -111,8 +135,6 @@ class RenderPlot:
             ymax = max(y_values) if y_values else 0
             annotation_y = ymax * 0.95
 
-            # For each known event, compute the group key based on the group_by parameter,
-            # then if the event key exists in our grouped data, annotate it.
             for event in known_events:
                 event_label = event.get('label', '')
                 event_date_str = event.get('date', '')
@@ -120,6 +142,12 @@ class RenderPlot:
                     event_dt = datetime.strptime(event_date_str, '%Y-%m-%d %H:%M:%S')
                 except ValueError as ve:
                     print(f"Error parsing event date '{event_date_str}': {ve}")
+                    continue
+
+                # Filter known events as well.
+                if date_from is not None and event_dt < date_from:
+                    continue
+                if date_to is not None and event_dt > date_to:
                     continue
 
                 if group_by == self.GROUP_DAY:
@@ -133,8 +161,8 @@ class RenderPlot:
                     x_pos = key_to_index[event_key]
                     # Draw a vertical dashed red line at the event's x position
                     ax.axvline(x=x_pos, color='red', linestyle='--', alpha=0.7)
-                    # Place the event label above the bar (or point)
-                    ax.text(x_pos, annotation_y, event_label, rotation=90,
+                    # Place the event label above the bar/point; text is horizontal (rotation=0)
+                    ax.text(x_pos, annotation_y, event_label, rotation=0,
                             color='red', fontsize=8, verticalalignment='top', horizontalalignment='center')
 
             plt.tight_layout()
@@ -184,14 +212,22 @@ if __name__ == "__main__":
     # Test 1: Render using the real sample data, grouped by day as a bar chart.
     print("Rendering real sample data grouped by day (Bar Chart):")
     renderer_real = RenderPlot(sample_data)
-    renderer_real.render(group_by=RenderPlot.GROUP_DAY, chart_type=RenderPlot.CHART_BAR)
+    # For example, filter for dates from 2025-02-01 onward.
+    renderer_real.render(group_by=RenderPlot.GROUP_DAY,
+                         chart_type=RenderPlot.CHART_BAR,
+                         date_from='2025-02-01 00:00:00')
 
     # Test 2: Render using the fake sample data, grouped by month (Bar Chart).
     print("Rendering fake sample data grouped by month (Bar Chart):")
     renderer_fake = RenderPlot(sample_data_fake)
-    renderer_fake.render(group_by=RenderPlot.GROUP_MONTH)
+    renderer_fake.render(group_by=RenderPlot.GROUP_MONTH,
+                         date_from='2025-01-01 00:00:00',
+                         date_to='2025-02-15 00:00:00')
 
     # Test 3: Render using the fake sample data, grouped by month as a line chart.
     print("Rendering fake sample data grouped by month (Line Chart):")
     renderer_fake_line = RenderPlot(sample_data_fake)
-    renderer_fake_line.render(group_by=RenderPlot.GROUP_MONTH, chart_type=RenderPlot.CHART_LINE)
+    renderer_fake_line.render(group_by=RenderPlot.GROUP_MONTH,
+                              chart_type=RenderPlot.CHART_LINE,
+                              date_from='2025-01-01 00:00:00',
+                              date_to='2025-02-15 00:00:00')
